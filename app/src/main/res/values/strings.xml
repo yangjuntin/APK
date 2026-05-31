@@ -1,0 +1,33 @@
+<resources>
+    <string name="app_name">耗电测试工具</string>
+
+    <string name="battery_loading">电量读取中…</string>
+    <string name="battery_info">电量：%1$d%%   温度：%2$.1f°C   电压：%3$.2fV   状态：%4$s</string>
+    <string name="charging">充电中</string>
+    <string name="discharging">放电中</string>
+    <string name="drain_info">本次已掉电：%1$d%%   耗时：%2$d 分钟</string>
+
+    <string name="threshold_label">自动停止电量阈值：%1$d%%</string>
+    <string name="cpu_label">CPU 满载线程数：%1$d</string>
+
+    <string name="load_options">耗电负载选项</string>
+    <string name="load_cpu">CPU 满载计算</string>
+    <string name="load_screen">屏幕最高亮度 + 常亮</string>
+    <string name="load_flash">开启闪光灯</string>
+    <string name="load_vibrate">持续震动马达</string>
+    <string name="flash_unavailable">本设备无闪光灯</string>
+
+    <string name="btn_start">一键开始耗电</string>
+    <string name="btn_stop">停止</string>
+
+    <string name="status_idle">状态：空闲</string>
+    <string name="status_running">状态：正在加速耗电…</string>
+    <string name="status_stopped_user">状态：已手动停止</string>
+    <string name="status_stopped_auto">状态：已到达阈值，自动停止</string>
+
+    <string name="no_load_selected">请至少选择一种耗电负载</string>
+    <string name="already_below">当前电量已低于设定阈值，无需启动</string>
+    <string name="auto_stopped">电量已降到 %1$d%%，已自动停止耗电</string>
+
+    <string name="hint">提示：本应用通过 CPU 满载、屏幕高亮、闪光灯、震动等方式快速消耗电量，用于平板续航/耗电测试。测试时请保持应用在前台、不要充电。设备温度过高时请停止测试。</string>
+</resources>
