@@ -73,8 +73,8 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // 保持屏幕常亮（测试期间屏幕本身也是耗电大户）
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // 注意：屏幕常亮标志只在“开始耗电”时添加、“停止”时清除，
+        // 避免停止后屏幕一直亮着继续耗电。
 
         cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
         vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
@@ -181,6 +181,8 @@ public class MainActivity extends AppCompatActivity {
             startCpuLoad(Math.max(1, sbCpu.getProgress()));
         }
         if (cbScreen.isChecked()) {
+            // 仅在勾选屏幕负载时保持常亮并拉到最高亮度
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             setScreenBrightness(1.0f);
         }
         if (cbFlash.isChecked() && flashCameraId != null) {
@@ -201,6 +203,8 @@ public class MainActivity extends AppCompatActivity {
         draining = false;
 
         stopCpuLoad();
+        // 取消屏幕常亮并恢复系统亮度，让屏幕能正常自动灭屏以省电
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         setScreenBrightness(-1f); // 恢复系统亮度
         setTorch(false);
         stopVibration();
