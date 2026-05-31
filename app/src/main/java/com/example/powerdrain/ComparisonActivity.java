@@ -52,10 +52,10 @@ public class ComparisonActivity extends AppCompatActivity {
 
     /** 截图识别出的一个控件 */
     private static class Detected {
-        String text;
+        String text;            // OCR 原始文字
         Rect box;
-        boolean on;          // 检测到的开/关
-        double blueRatio;    // 蓝色像素占比(用于展示与校准)
+        boolean on;             // 检测到的开/关
+        double highlightRatio;  // 高亮(饱和)像素占比，用于展示与校准
         int matchedRefIndex = -1;
     }
 
@@ -75,8 +75,8 @@ public class ComparisonActivity extends AppCompatActivity {
     private static final String SAVED_DOC = "reference_doc.bin";
     private static final String SAVED_DOC_NAME = "reference_doc_name.txt";
 
-    // 蓝色高亮判定灵敏度：blueRatio 阈值(百分比)。值越小越容易判为“开”。
-    private int sensitivityPercent = 12;
+    // 高亮判定灵敏度：饱和高亮像素占比阈值(百分比)。值越小越容易判为“开”。
+    private int sensitivityPercent = 8;
 
     private ActivityResultLauncher<PickVisualMediaRequest> picker;
     private ActivityResultLauncher<String[]> docPicker;
@@ -337,7 +337,11 @@ public class ComparisonActivity extends AppCompatActivity {
                         tvResult.setText(getString(R.string.cmp_ocr_failed, e.getMessage())));
     }
 
-    /** 收集识别行，匹配参考名称，并检测开关状态，按阅读顺序排列。 */
+    /**
+     * 收集识别行 -> 过滤掉顶部区域(WLAN/蓝牙/调节条) -> 只保留圆形图标网格 ->
+     * 按从上到下、行内从左到右排序 -> 检测每个图标开关状态。
+     * 返回的列表包含网格内的全部图标(含未匹配文档的)，供后续序列对齐。
+     */
     private List<Detected> collectDetections(Text result, Bitmap bmp) {
         List<Detected> raw = new ArrayList<>();
         for (Text.TextBlock block : result.getTextBlocks()) {
@@ -353,37 +357,111 @@ public class ComparisonActivity extends AppCompatActivity {
                 Detected d = new Detected();
                 d.text = txt;
                 d.box = box;
-                d.matchedRefIndex = matchReference(txt);
                 raw.add(d);
             }
         }
+        if (raw.isEmpty()) {
+            return new ArrayList<>();
+        }
 
-        // 只保留能匹配到参考清单的行（控件标签）
-        List<Detected> matched = new ArrayList<>();
-        for (Detected d : raw) {
+        // 1) 按 Y 聚类成行
+        List<List<Detected>> rows = clusterRows(raw);
+
+        // 2) 找到圆形图标网格的起始行：第一行包含 >=3 个标签的行。
+        //    其上方的 WLAN/蓝牙大方块(每行1个)、声音/亮度调节条(无文字)被排除。
+        int gridStartRow = -1;
+        for (int i = 0; i < rows.size(); i++) {
+            if (rows.get(i).size() >= 3) {
+                gridStartRow = i;
+                break;
+            }
+        }
+        if (gridStartRow < 0) {
+            gridStartRow = 0; // 没有明显网格则全保留，避免误杀
+        }
+
+        // 3) 收集网格起始行及其以下的所有标签
+        List<Detected> grid = new ArrayList<>();
+        for (int i = gridStartRow; i < rows.size(); i++) {
+            grid.addAll(rows.get(i));
+        }
+
+        // 4) 阅读顺序排序
+        sortReadingOrder(grid);
+
+        // 5) 匹配文档名称（用于对齐与开关比对，未匹配的保留 matchedRefIndex=-1）
+        for (Detected d : grid) {
+            d.matchedRefIndex = matchReference(d.text);
+        }
+
+        // 5b) 过滤：去掉 OCR 折行碎片与重复匹配，避免误判“多出/缺失”
+        List<Detected> cleaned = new ArrayList<>();
+        boolean[] usedRef = new boolean[reference.size()];
+        for (Detected d : grid) {
             if (d.matchedRefIndex >= 0) {
-                matched.add(d);
+                if (usedRef[d.matchedRefIndex]) {
+                    continue; // 同一文档项重复识别，保留第一个
+                }
+                usedRef[d.matchedRefIndex] = true;
+                cleaned.add(d);
+            } else if (!isWrapFragment(d.text)) {
+                cleaned.add(d); // 真正不在文档中的多出项
             }
+            // 折行碎片(某文档名的子串)直接丢弃
         }
+        grid = cleaned;
 
-        // 阅读顺序：先按行(Y)聚类，再行内按 X 排序
-        sortReadingOrder(matched);
-
-        // 去重：同一参考项可能被多次识别，保留第一个
-        List<Detected> deduped = new ArrayList<>();
-        boolean[] used = new boolean[reference.size()];
-        for (Detected d : matched) {
-            if (!used[d.matchedRefIndex]) {
-                used[d.matchedRefIndex] = true;
-                deduped.add(d);
-            }
-        }
-
-        // 检测每个控件的开关状态（采样图标高亮区域）
-        for (Detected d : deduped) {
+        // 6) 检测每个图标开关状态
+        for (Detected d : grid) {
             detectState(d, bmp);
         }
-        return deduped;
+        return grid;
+    }
+
+    /** 判断未匹配文本是否为某文档名的子串（多为 OCR 折行碎片，如“字幕”“手”）。 */
+    private boolean isWrapFragment(String text) {
+        String t = normalize(text);
+        if (t.length() <= 1) {
+            return true;
+        }
+        for (RefItem r : reference) {
+            String core = normalize(r.name).replace("Bar", "").replace("bar", "");
+            if (!core.equals(t) && core.contains(t)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 将识别行按 Y 聚类成行（每行内未排序）。 */
+    private List<List<Detected>> clusterRows(List<Detected> list) {
+        List<Detected> sorted = new ArrayList<>(list);
+        List<Integer> heights = new ArrayList<>();
+        for (Detected d : sorted) {
+            heights.add(d.box.height());
+        }
+        Collections.sort(heights);
+        int medianH = heights.isEmpty() ? 24 : heights.get(heights.size() / 2);
+        int rowTol = Math.max(medianH, 20) * 2;
+
+        Collections.sort(sorted, Comparator.comparingInt(a -> a.box.centerY()));
+        List<List<Detected>> rows = new ArrayList<>();
+        List<Detected> cur = new ArrayList<>();
+        int rowBaseY = sorted.get(0).box.centerY();
+        for (Detected d : sorted) {
+            if (Math.abs(d.box.centerY() - rowBaseY) > rowTol && !cur.isEmpty()) {
+                rows.add(cur);
+                cur = new ArrayList<>();
+            }
+            if (cur.isEmpty()) {
+                rowBaseY = d.box.centerY();
+            }
+            cur.add(d);
+        }
+        if (!cur.isEmpty()) {
+            rows.add(cur);
+        }
+        return rows;
     }
 
     /** 按网格阅读顺序排序：行聚类(Y) + 行内 X 升序。 */
@@ -424,42 +502,53 @@ public class ComparisonActivity extends AppCompatActivity {
         }
     }
 
-    /** 采样控件图标区域，统计蓝色像素占比判断是否高亮(开)。 */
+    /**
+     * 采样圆形图标区域，统计“饱和高亮”像素占比判断是否点亮(开)。
+     * 点亮态图标通常为蓝色/黄色等高饱和色；关闭态为灰白描边(低饱和)。
+     */
     private void detectState(Detected d, Bitmap bmp) {
         Rect b = d.box;
         int h = b.height();
-        int w = b.width();
-        // 图标通常在文字标签上方，采样区域：以文字水平中心为中心、宽约文字宽、
-        // 垂直方向取文字上方约 0.3h ~ 2.4h 的范围。
+        // 图标在文字标签正上方。用标签高度估算图标圆心与半径。
         int cx = b.centerX();
-        int left = Math.max(0, cx - (int) (w * 0.7));
-        int right = Math.min(bmp.getWidth() - 1, cx + (int) (w * 0.7));
-        int top = Math.max(0, b.top - (int) (h * 2.4));
-        int bottom = Math.max(0, b.top - (int) (h * 0.3));
+        int radius = (int) (h * 1.15);              // 采样圆半径
+        int cy = b.top - (int) (h * 1.35);          // 图标圆心(标签上方)
+        int left = Math.max(0, cx - radius);
+        int right = Math.min(bmp.getWidth() - 1, cx + radius);
+        int top = Math.max(0, cy - radius);
+        int bottom = Math.min(bmp.getHeight() - 1, cy + radius);
         if (bottom <= top || right <= left) {
             d.on = false;
-            d.blueRatio = 0;
+            d.highlightRatio = 0;
             return;
         }
-        int stepX = Math.max(1, (right - left) / 24);
-        int stepY = Math.max(1, (bottom - top) / 24);
+        int stepX = Math.max(1, (right - left) / 28);
+        int stepY = Math.max(1, (bottom - top) / 28);
         int sampled = 0;
-        int blue = 0;
-        for (int y = top; y < bottom; y += stepY) {
-            for (int x = left; x < right; x += stepX) {
+        int highlight = 0;
+        float[] hsv = new float[3];
+        for (int y = top; y <= bottom; y += stepY) {
+            for (int x = left; x <= right; x += stepX) {
+                // 圆形掩膜，避开图标外的面板背景
+                int dx = x - cx;
+                int dy = y - cy;
+                if (dx * dx + dy * dy > radius * radius) {
+                    continue;
+                }
                 int c = bmp.getPixel(x, y);
-                int r = Color.red(c);
-                int g = Color.green(c);
-                int bl = Color.blue(c);
+                Color.colorToHSV(c, hsv);
+                float s = hsv[1];
+                float v = hsv[2];
                 sampled++;
-                // 蓝色高亮判定：蓝通道明显高于红/绿，且不太暗
-                if (bl > 110 && bl > r + 30 && bl > g + 15) {
-                    blue++;
+                // 高亮(非默认色)：饱和度足够高且不太暗。
+                // 灰/白描边 S 很低 -> 视为关；蓝/黄/绿等彩色 S 高 -> 视为开。
+                if (s >= 0.30f && v >= 0.35f) {
+                    highlight++;
                 }
             }
         }
-        d.blueRatio = sampled == 0 ? 0 : (double) blue / sampled;
-        d.on = d.blueRatio * 100.0 >= sensitivityPercent;
+        d.highlightRatio = sampled == 0 ? 0 : (double) highlight / sampled;
+        d.on = d.highlightRatio * 100.0 >= sensitivityPercent;
     }
 
     // ====================== 名称匹配 ======================
@@ -496,109 +585,178 @@ public class ComparisonActivity extends AppCompatActivity {
     // ====================== 报告生成 ======================
 
     private String buildReport(List<Detected> detections) {
-        StringBuilder sb = new StringBuilder();
-        int problems = 0;
-
         if (detections.isEmpty()) {
             return getString(R.string.cmp_none_recognized);
         }
 
-        // ---- 顺序检查 ----
-        // detections 已是截图阅读顺序，取其 matchedRefIndex 序列，检查是否相对参考递增
-        List<Integer> seq = new ArrayList<>();
+        // 截图侧名称序列（匹配到文档的用文档标准名，未匹配用 OCR 原文）
+        List<String> screenNames = new ArrayList<>();
         for (Detected d : detections) {
-            seq.add(d.matchedRefIndex);
+            String nm = d.matchedRefIndex >= 0
+                    ? normalize(reference.get(d.matchedRefIndex).name)
+                    : normalize(d.text);
+            screenNames.add(nm);
         }
-        List<Integer> orderProblems = new ArrayList<>();
-        int prev = -1;
-        for (int i = 0; i < seq.size(); i++) {
-            if (seq.get(i) < prev) {
-                orderProblems.add(i);
-            } else {
-                prev = seq.get(i);
+
+        // 锚点：截图中第一个能匹配文档的图标，确定文档对比起点
+        int refStart = -1;
+        for (Detected d : detections) {
+            if (d.matchedRefIndex >= 0) {
+                refStart = d.matchedRefIndex;
+                break;
             }
         }
-
-        sb.append("<b>识别到 ").append(detections.size()).append(" 个控件</b><br>");
-        sb.append("<br><b>【顺序检查】</b><br>");
-        if (orderProblems.isEmpty()) {
-            sb.append("<font color='#2e7d32'>✔ 顺序与参考清单一致</font><br>");
-        } else {
-            problems += orderProblems.size();
-            sb.append("<font color='#c62828'>✗ 顺序不符，以下控件相对参考顺序错位：</font><br>");
-            for (int idx : orderProblems) {
-                Detected d = detections.get(idx);
-                sb.append("&nbsp;&nbsp;• <b>").append(reference.get(d.matchedRefIndex).name)
-                        .append("</b>（出现在第 ").append(idx + 1).append(" 位）<br>");
-            }
+        if (refStart < 0) {
+            return "<font color='#c62828'><b>✗ 未能将截图中任何圆形图标与文档对应上。</b></font><br>"
+                    + "请确认上传的截图是通控中心面板，且文字清晰。";
         }
 
-        // 实际顺序 vs 参考顺序对照
-        sb.append("<br><b>【截图顺序 → 参考序号】</b><br>");
-        for (int i = 0; i < detections.size(); i++) {
-            Detected d = detections.get(i);
-            RefItem r = reference.get(d.matchedRefIndex);
-            sb.append(i + 1).append(". ").append(r.name)
-                    .append(" <font color='#888'>(参考#").append(r.order).append(")</font><br>");
+        // 文档侧名称序列（从锚点行往下）
+        List<String> refNames = new ArrayList<>();
+        List<Integer> refRealIdx = new ArrayList<>();
+        for (int i = refStart; i < reference.size(); i++) {
+            refNames.add(normalize(reference.get(i).name));
+            refRealIdx.add(i);
         }
 
-        // ---- 开关状态检查 ----
-        sb.append("<br><b>【开关状态检查】</b>（蓝色高亮=开）<br>");
-        for (Detected d : detections) {
-            RefItem r = reference.get(d.matchedRefIndex);
-            String detectedTxt = d.on ? "开" : "关";
-            String pct = String.format(java.util.Locale.US, "%.0f%%", d.blueRatio * 100);
-            if (!r.toggle) {
-                // 动作型：无固定开关，仅当检测到高亮时提示
-                if (d.on) {
-                    problems++;
-                    sb.append("<font color='#ef6c00'>⚠ ").append(r.name)
-                            .append("：动作型(参考为 -)，却检测到高亮(").append(pct).append(")</font><br>");
+        // LCS 序列对齐
+        int n = screenNames.size();
+        int m = refNames.size();
+        int[][] dp = new int[n + 1][m + 1];
+        for (int i = n - 1; i >= 0; i--) {
+            for (int j = m - 1; j >= 0; j--) {
+                if (screenNames.get(i).equals(refNames.get(j))) {
+                    dp[i][j] = dp[i + 1][j + 1] + 1;
                 } else {
-                    sb.append("<font color='#888'>○ ").append(r.name)
-                            .append("：动作型，未高亮(").append(pct).append(")</font><br>");
+                    dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
                 }
+            }
+        }
+        // 0=匹配, 1=截图多出, 2=文档缺失
+        List<int[]> ops = new ArrayList<>();
+        int i = 0, j = 0;
+        while (i < n && j < m) {
+            if (screenNames.get(i).equals(refNames.get(j))) {
+                ops.add(new int[]{0, i, j});
+                i++;
+                j++;
+            } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+                ops.add(new int[]{1, i, -1});
+                i++;
+            } else {
+                ops.add(new int[]{2, -1, j});
+                j++;
+            }
+        }
+        while (i < n) {
+            ops.add(new int[]{1, i++, -1});
+        }
+        while (j < m) {
+            ops.add(new int[]{2, -1, j++});
+        }
+
+        // 归类：截图多出 / 文档缺失；两者交集视为“顺序错位”
+        java.util.LinkedHashSet<String> screenOnly = new java.util.LinkedHashSet<>();
+        java.util.LinkedHashSet<String> refOnly = new java.util.LinkedHashSet<>();
+        for (int[] op : ops) {
+            if (op[0] == 1) {
+                screenOnly.add(screenNames.get(op[1]));
+            } else if (op[0] == 2) {
+                refOnly.add(refNames.get(op[2]));
+            }
+        }
+        java.util.LinkedHashSet<String> orderMismatch = new java.util.LinkedHashSet<>(screenOnly);
+        orderMismatch.retainAll(refOnly);
+        screenOnly.removeAll(orderMismatch);
+        refOnly.removeAll(orderMismatch);
+
+        int problems = 0;
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("<b>识别到 ").append(detections.size()).append(" 个圆形图标</b>")
+                .append("，对比起点：<b>").append(reference.get(refStart).name)
+                .append("</b>（文档 No.").append(reference.get(refStart).order).append("）<br>");
+
+        // ---- 顺序错位 ----
+        sb.append("<br><b>【顺序检查】</b><br>");
+        if (orderMismatch.isEmpty() && screenOnly.isEmpty() && refOnly.isEmpty()) {
+            sb.append("<font color='#2e7d32'>✔ 名称与顺序完全一致</font><br>");
+        } else if (orderMismatch.isEmpty()) {
+            sb.append("<font color='#2e7d32'>✔ 已对应上的项顺序一致</font>（但存在缺失/多出，见下）<br>");
+        } else {
+            problems += orderMismatch.size();
+            sb.append("<font color='#c62828'>✗ 以下控件顺序错位（位置与文档不符）：</font><br>");
+            for (String nm : orderMismatch) {
+                sb.append("&nbsp;&nbsp;• <b>").append(nm).append("</b><br>");
+            }
+        }
+
+        // ---- 文档有、截图无（缺失）----
+        if (!refOnly.isEmpty()) {
+            problems += refOnly.size();
+            sb.append("<br><font color='#c62828'>✗ 文档中有、截图未识别到（缺失 ")
+                    .append(refOnly.size()).append(" 项）：</font><br>");
+            for (String nm : refOnly) {
+                sb.append("&nbsp;&nbsp;• ").append(nm).append("<br>");
+            }
+        }
+
+        // ---- 截图有、文档无（多出）----
+        if (!screenOnly.isEmpty()) {
+            problems += screenOnly.size();
+            sb.append("<br><font color='#ef6c00'>⚠ 截图中有、文档没有（多出 ")
+                    .append(screenOnly.size()).append(" 项）：</font><br>");
+            for (String nm : screenOnly) {
+                sb.append("&nbsp;&nbsp;• ").append(nm).append("<br>");
+            }
+        }
+
+        // ---- 截图顺序 → 文档序号 对照 ----
+        sb.append("<br><b>【截图顺序 → 文档序号】</b><br>");
+        for (int k = 0; k < detections.size(); k++) {
+            Detected d = detections.get(k);
+            if (d.matchedRefIndex >= 0) {
+                RefItem r = reference.get(d.matchedRefIndex);
+                sb.append(k + 1).append(". ").append(r.name)
+                        .append(" <font color='#888'>(文档 No.").append(r.order).append(")</font><br>");
+            } else {
+                sb.append(k + 1).append(". <font color='#ef6c00'>").append(d.text)
+                        .append("（不在文档）</font><br>");
+            }
+        }
+
+        // ---- 开关状态检查（仅对已对应上的项）----
+        sb.append("<br><b>【开关状态检查】</b>（彩色高亮=开，灰色=关）<br>");
+        for (int[] op : ops) {
+            if (op[0] != 0) {
                 continue;
             }
-            boolean ok = (d.on == r.expectedOn);
+            Detected d = detections.get(op[1]);
+            RefItem r = reference.get(refRealIdx.get(op[2]));
+            String detectedTxt = d.on ? "开" : "关";
             String expectTxt = r.expectedOn ? "开" : "关";
-            if (ok) {
+            String pct = String.format(java.util.Locale.US, "%.0f%%", d.highlightRatio * 100);
+            if (d.on == r.expectedOn) {
                 sb.append("<font color='#2e7d32'>✔ ").append(r.name)
                         .append("：实际=").append(detectedTxt)
-                        .append("，参考=").append(expectTxt)
+                        .append("，文档=").append(expectTxt)
                         .append(" <font color='#888'>(").append(pct).append(")</font></font><br>");
             } else {
                 problems++;
                 sb.append("<font color='#c62828'>✗ ").append(r.name)
                         .append("：实际=").append(detectedTxt)
-                        .append("，参考=").append(expectTxt)
+                        .append("，文档=").append(expectTxt)
                         .append(" <font color='#888'>(").append(pct).append(")</font></font><br>");
             }
-        }
-
-        // ---- 参考清单中未在截图识别到的开关型项 ----
-        boolean[] seen = new boolean[reference.size()];
-        for (Detected d : detections) {
-            seen[d.matchedRefIndex] = true;
-        }
-        StringBuilder missing = new StringBuilder();
-        for (int i = 0; i < reference.size(); i++) {
-            if (!seen[i]) {
-                missing.append("&nbsp;&nbsp;• ").append(reference.get(i).name).append("<br>");
-            }
-        }
-        if (missing.length() > 0) {
-            sb.append("<br><b>【参考中未识别到的项】</b><br>")
-                    .append("<font color='#888'>(可能被截图裁掉、滑块无文字标签或 OCR 未识别)</font><br>")
-                    .append(missing);
         }
 
         // ---- 总结 ----
         String summary;
         if (problems == 0) {
-            summary = "<br><font color='#2e7d32'><b>✔ 全部一致，无异常</b></font><br>";
+            summary = "<font color='#2e7d32'><b>✔ 全部一致，无异常</b></font><br><br>";
         } else {
-            summary = "<br><font color='#c62828'><b>✗ 共发现 " + problems + " 处异常，请见上方红色/橙色标记</b></font><br>";
+            summary = "<font color='#c62828'><b>✗ 共发现 " + problems
+                    + " 处异常，请见下方红色/橙色标记</b></font><br><br>";
         }
         return summary + sb;
     }

@@ -43,9 +43,9 @@
     <string name="cmp_doc_imported">参考文档导入成功，共 %1$d 项</string>
     <string name="cmp_doc_empty">未从文档中解析到有效数据，请确认是 B列名称、C列状态 的表格</string>
     <string name="cmp_doc_failed">文档导入失败：%1$s</string>
-    <string name="cmp_sensitivity">蓝色高亮灵敏度（蓝色像素占比阈值）：%1$d%%</string>
+    <string name="cmp_sensitivity">高亮灵敏度（彩色像素占比阈值）：%1$d%%</string>
     <string name="cmp_result_empty">请先上传一张通控中心截图。</string>
     <string name="cmp_recognizing">正在识别…</string>
-    <string name="cmp_none_recognized">未识别到任何匹配的控件名称。请确认截图是通控中心面板，且文字清晰完整。</string>
+    <string name="cmp_none_recognized">未识别到任何圆形图标。请确认截图是通控中心面板，且文字清晰完整。</string>
     <string name="cmp_ocr_failed">文字识别失败：%1$s</string>
 </resources>
