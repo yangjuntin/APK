@@ -28,6 +28,22 @@
             android:paddingBottom="10dp" />
 
         <Button
+            android:id="@+id/btnPickDoc"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/cmp_pick_doc" />
+
+        <TextView
+            android:id="@+id/tvRefStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="4dp"
+            android:paddingBottom="6dp"
+            android:textSize="13sp"
+            android:textColor="#666666"
+            android:text="@string/cmp_ref_none" />
+
+        <Button
             android:id="@+id/btnPick"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

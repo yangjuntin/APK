@@ -64,15 +64,22 @@ public class ComparisonActivity extends AppCompatActivity {
     private ImageView ivPreview;
     private TextView tvResult;
     private TextView tvSensitivity;
+    private TextView tvRefStatus;
     private SeekBar sbSensitivity;
     private Button btnPick;
+    private Button btnPickDoc;
 
     private Bitmap currentBitmap;
+
+    // 持久化保存上传文档的文件名(内部存储)
+    private static final String SAVED_DOC = "reference_doc.bin";
+    private static final String SAVED_DOC_NAME = "reference_doc_name.txt";
 
     // 蓝色高亮判定灵敏度：blueRatio 阈值(百分比)。值越小越容易判为“开”。
     private int sensitivityPercent = 12;
 
     private ActivityResultLauncher<PickVisualMediaRequest> picker;
+    private ActivityResultLauncher<String[]> docPicker;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -82,8 +89,10 @@ public class ComparisonActivity extends AppCompatActivity {
         ivPreview = findViewById(R.id.ivPreview);
         tvResult = findViewById(R.id.tvResult);
         tvSensitivity = findViewById(R.id.tvSensitivity);
+        tvRefStatus = findViewById(R.id.tvRefStatus);
         sbSensitivity = findViewById(R.id.sbSensitivity);
         btnPick = findViewById(R.id.btnPick);
+        btnPickDoc = findViewById(R.id.btnPickDoc);
 
         loadReference();
 
@@ -112,14 +121,52 @@ public class ComparisonActivity extends AppCompatActivity {
                     }
                 });
 
+        docPicker = registerForActivityResult(
+                new ActivityResultContracts.OpenDocument(),
+                uri -> {
+                    if (uri != null) {
+                        importReferenceDoc(uri);
+                    }
+                });
+
         btnPick.setOnClickListener(v -> picker.launch(new PickVisualMediaRequest.Builder()
                 .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly.INSTANCE)
                 .build()));
+
+        btnPickDoc.setOnClickListener(v -> docPicker.launch(new String[]{
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.ms-excel",
+                "text/csv",
+                "text/comma-separated-values",
+                "text/plain",
+                "*/*"
+        }));
     }
 
     // ====================== 参考清单 ======================
 
+    /** 优先加载用户上传并持久化的文档，否则回退到内置 assets 清单。 */
     private void loadReference() {
+        java.io.File saved = new java.io.File(getFilesDir(), SAVED_DOC);
+        if (saved.exists()) {
+            String name = readSavedDocName();
+            try (InputStream is = new java.io.FileInputStream(saved)) {
+                List<ReferenceParser.Row> rows = ReferenceParser.parse(name, is);
+                if (!rows.isEmpty()) {
+                    applyRows(rows);
+                    setRefStatus(getString(R.string.cmp_ref_loaded_doc, name, reference.size()), false);
+                    return;
+                }
+            } catch (Exception e) {
+                // 解析失败则回退到内置清单
+            }
+        }
+        loadBuiltinReference();
+        setRefStatus(getString(R.string.cmp_ref_builtin, reference.size()), false);
+    }
+
+    private void loadBuiltinReference() {
+        reference.clear();
         try (InputStream is = getAssets().open("control_center_reference.json")) {
             StringBuilder sb = new StringBuilder();
             BufferedReader br = new BufferedReader(new InputStreamReader(is, "UTF-8"));
@@ -140,6 +187,105 @@ public class ComparisonActivity extends AppCompatActivity {
             }
         } catch (Exception e) {
             Toast.makeText(this, "参考清单加载失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void applyRows(List<ReferenceParser.Row> rows) {
+        reference.clear();
+        for (ReferenceParser.Row row : rows) {
+            RefItem r = new RefItem();
+            r.order = row.order;
+            r.name = row.name;
+            r.expectedOn = row.expectedOn;
+            r.toggle = row.toggle;
+            reference.add(r);
+        }
+    }
+
+    /** 导入用户选择的参考文档：解析 -> 校验 -> 持久化 -> 应用。 */
+    private void importReferenceDoc(Uri uri) {
+        String name = queryDisplayName(uri);
+        try {
+            // 先读到内存（同时用于解析与保存）
+            byte[] data;
+            try (InputStream is = getContentResolver().openInputStream(uri);
+                 java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream()) {
+                byte[] buf = new byte[8192];
+                int n;
+                while (is != null && (n = is.read(buf)) > 0) {
+                    bos.write(buf, 0, n);
+                }
+                data = bos.toByteArray();
+            }
+            List<ReferenceParser.Row> rows = ReferenceParser.parse(name,
+                    new java.io.ByteArrayInputStream(data));
+            if (rows.isEmpty()) {
+                Toast.makeText(this, R.string.cmp_doc_empty, Toast.LENGTH_LONG).show();
+                return;
+            }
+            // 持久化
+            try (java.io.FileOutputStream fos =
+                         new java.io.FileOutputStream(new java.io.File(getFilesDir(), SAVED_DOC))) {
+                fos.write(data);
+            }
+            saveDocName(name);
+            applyRows(rows);
+            setRefStatus(getString(R.string.cmp_ref_loaded_doc, name, reference.size()), true);
+            Toast.makeText(this, getString(R.string.cmp_doc_imported, reference.size()),
+                    Toast.LENGTH_LONG).show();
+            // 若已加载截图，自动用新文档重新比对
+            if (currentBitmap != null) {
+                analyze(currentBitmap);
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, getString(R.string.cmp_doc_failed, e.getMessage()),
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void setRefStatus(String text, boolean highlight) {
+        tvRefStatus.setText(text);
+        tvRefStatus.setTextColor(highlight ? 0xFF2E7D32 : 0xFF666666);
+    }
+
+    private String queryDisplayName(Uri uri) {
+        String name = null;
+        try (android.database.Cursor c =
+                     getContentResolver().query(uri, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) {
+                    name = c.getString(idx);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return name == null ? "reference.xlsx" : name;
+    }
+
+    private void saveDocName(String name) {
+        try (java.io.FileOutputStream fos =
+                     new java.io.FileOutputStream(new java.io.File(getFilesDir(), SAVED_DOC_NAME))) {
+            fos.write(name.getBytes("UTF-8"));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private String readSavedDocName() {
+        java.io.File f = new java.io.File(getFilesDir(), SAVED_DOC_NAME);
+        if (!f.exists()) {
+            return "reference.xlsx";
+        }
+        try (InputStream is = new java.io.FileInputStream(f)) {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[1024];
+            int n;
+            while ((n = is.read(buf)) > 0) {
+                bos.write(buf, 0, n);
+            }
+            return new String(bos.toByteArray(), "UTF-8");
+        } catch (Exception e) {
+            return "reference.xlsx";
         }
     }
 

@@ -34,8 +34,15 @@
     <string name="btn_open_compare">通控中心截图对比</string>
 
     <string name="cmp_title">通控中心截图对比</string>
-    <string name="cmp_hint">上传一张通控中心截图，自动识别各控件名称与开关状态（蓝色高亮=开），并与内置参考清单对比顺序与开关是否正确。若识别不准，可拖动下方灵敏度滑块调整蓝色判定。</string>
+    <string name="cmp_hint">先上传参考文档（通控中心排序表 .xlsx 或 .csv），再上传一张通控中心截图，自动识别各控件名称与开关状态（蓝色高亮=开），并与文档对比顺序与开关是否正确。若识别不准，可拖动下方灵敏度滑块调整蓝色判定。</string>
     <string name="cmp_pick">上传截图</string>
+    <string name="cmp_pick_doc">上传参考文档（xlsx/csv）</string>
+    <string name="cmp_ref_none">参考清单：未加载</string>
+    <string name="cmp_ref_builtin">参考清单：内置默认（共 %1$d 项），可上传文档替换</string>
+    <string name="cmp_ref_loaded_doc">参考清单：%1$s（共 %2$d 项）</string>
+    <string name="cmp_doc_imported">参考文档导入成功，共 %1$d 项</string>
+    <string name="cmp_doc_empty">未从文档中解析到有效数据，请确认是 B列名称、C列状态 的表格</string>
+    <string name="cmp_doc_failed">文档导入失败：%1$s</string>
     <string name="cmp_sensitivity">蓝色高亮灵敏度（蓝色像素占比阈值）：%1$d%%</string>
     <string name="cmp_result_empty">请先上传一张通控中心截图。</string>
     <string name="cmp_recognizing">正在识别…</string>
