@@ -367,34 +367,39 @@ public class ComparisonActivity extends AppCompatActivity {
         // 1) 按 Y 聚类成行
         List<List<Detected>> rows = clusterRows(raw);
 
-        // 2) 定位圆形图标网格 = “连续行数最多的那段 >=3 列的行”。
-        //    状态栏(孤立1行)、WLAN/蓝牙(1~2列)会打断连续性，唯独 N 行图标网格是最长连续段，
-        //    由此把红框上方的状态栏/日期/WLAN/蓝牙等干扰彻底排除。
-        int bestStart = -1, bestLen = 0;
-        int curStart = -1, curLen = 0;
+        // 2) 定位圆形图标网格的起始行：
+        //    第一行满足 (a)>=3 列 且 (b)至少有一项能匹配上文档名 的行。
+        //    - 状态栏(19:09/日期)：不含文档名 -> 排除
+        //    - WLAN/蓝牙大方块/调节条：每行 <3 列 -> 排除
+        //    - “视频通话助手”折行出的单独“手”等碎片不会影响起点判断
+        //    从起始行一直取到底部（不依赖连续段，避免折行碎片截断网格）。
+        int gridStart = -1;
         for (int i = 0; i < rows.size(); i++) {
-            if (rows.get(i).size() >= 3) {
-                if (curLen == 0) {
-                    curStart = i;
+            List<Detected> row = rows.get(i);
+            if (row.size() < 3) {
+                continue;
+            }
+            boolean hasDocMatch = false;
+            for (Detected d : row) {
+                if (matchReference(d.text) >= 0) {
+                    hasDocMatch = true;
+                    break;
                 }
-                curLen++;
-                if (curLen > bestLen) {
-                    bestLen = curLen;
-                    bestStart = curStart;
-                }
-            } else {
-                curLen = 0;
+            }
+            if (hasDocMatch) {
+                gridStart = i;
+                break;
             }
         }
 
         List<Detected> grid = new ArrayList<>();
-        if (bestStart < 0) {
+        if (gridStart < 0) {
             // 没有明显网格则全保留，避免误杀
             for (List<Detected> r : rows) {
                 grid.addAll(r);
             }
         } else {
-            for (int i = bestStart; i < bestStart + bestLen; i++) {
+            for (int i = gridStart; i < rows.size(); i++) {
                 grid.addAll(rows.get(i));
             }
         }
