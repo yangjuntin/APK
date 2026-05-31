@@ -436,10 +436,14 @@ public class ComparisonActivity extends AppCompatActivity {
         return grid;
     }
 
-    /** 判断未匹配文本是否为某文档名的子串（多为 OCR 折行碎片，如“字幕”“手”）。 */
+    /**
+     * 判断未匹配文本是否应作为碎片丢弃：
+     * - 长度 <3 的未匹配短词（多为顶部状态栏残留，如“已日”“已开启”被误读）
+     * - 某文档名的子串（OCR 折行碎片，如“字幕”“手”）
+     */
     private boolean isWrapFragment(String text) {
         String t = normalize(text);
-        if (t.length() <= 1) {
+        if (t.length() < 3) {
             return true;
         }
         for (RefItem r : reference) {
@@ -594,6 +598,9 @@ public class ComparisonActivity extends AppCompatActivity {
     /** 返回匹配的参考项下标，未匹配返回 -1。 */
     private int matchReference(String ocrText) {
         String t = normalize(ocrText);
+        if (t.isEmpty()) {
+            return -1;
+        }
         // 1) 完全相等
         for (int i = 0; i < reference.size(); i++) {
             if (normalize(reference.get(i).name).equalsIgnoreCase(t)) {
@@ -608,7 +615,48 @@ public class ComparisonActivity extends AppCompatActivity {
                 return i;
             }
         }
+        // 3) 模糊匹配：容忍 OCR 单字误读（如“超级互联”被读成“起级互联”）。
+        //    仅对长度>=3 的词做，按编辑距离相似度，长度差<=1 且相似度>=0.7。
+        if (t.length() >= 3) {
+            int best = -1;
+            double bestSim = 0;
+            for (int i = 0; i < reference.size(); i++) {
+                String ref = normalize(reference.get(i).name).replace("Bar", "").replace("bar", "");
+                if (Math.abs(ref.length() - t.length()) > 1) {
+                    continue;
+                }
+                int dist = levenshtein(t, ref);
+                double sim = 1.0 - (double) dist / Math.max(t.length(), ref.length());
+                if (sim >= 0.7 && sim > bestSim) {
+                    bestSim = sim;
+                    best = i;
+                }
+            }
+            if (best >= 0) {
+                return best;
+            }
+        }
         return -1;
+    }
+
+    /** 编辑距离(Levenshtein)。 */
+    private static int levenshtein(String a, String b) {
+        int[] prev = new int[b.length() + 1];
+        int[] cur = new int[b.length() + 1];
+        for (int j = 0; j <= b.length(); j++) {
+            prev[j] = j;
+        }
+        for (int i = 1; i <= a.length(); i++) {
+            cur[0] = i;
+            for (int j = 1; j <= b.length(); j++) {
+                int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
+                cur[j] = Math.min(Math.min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+            }
+            int[] tmp = prev;
+            prev = cur;
+            cur = tmp;
+        }
+        return prev[b.length()];
     }
 
     // ====================== 报告生成 ======================
