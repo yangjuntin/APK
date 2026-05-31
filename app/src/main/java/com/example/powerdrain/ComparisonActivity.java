@@ -367,23 +367,36 @@ public class ComparisonActivity extends AppCompatActivity {
         // 1) 按 Y 聚类成行
         List<List<Detected>> rows = clusterRows(raw);
 
-        // 2) 找到圆形图标网格的起始行：第一行包含 >=3 个标签的行。
-        //    其上方的 WLAN/蓝牙大方块(每行1个)、声音/亮度调节条(无文字)被排除。
-        int gridStartRow = -1;
+        // 2) 定位圆形图标网格 = “连续行数最多的那段 >=3 列的行”。
+        //    状态栏(孤立1行)、WLAN/蓝牙(1~2列)会打断连续性，唯独 N 行图标网格是最长连续段，
+        //    由此把红框上方的状态栏/日期/WLAN/蓝牙等干扰彻底排除。
+        int bestStart = -1, bestLen = 0;
+        int curStart = -1, curLen = 0;
         for (int i = 0; i < rows.size(); i++) {
             if (rows.get(i).size() >= 3) {
-                gridStartRow = i;
-                break;
+                if (curLen == 0) {
+                    curStart = i;
+                }
+                curLen++;
+                if (curLen > bestLen) {
+                    bestLen = curLen;
+                    bestStart = curStart;
+                }
+            } else {
+                curLen = 0;
             }
         }
-        if (gridStartRow < 0) {
-            gridStartRow = 0; // 没有明显网格则全保留，避免误杀
-        }
 
-        // 3) 收集网格起始行及其以下的所有标签
         List<Detected> grid = new ArrayList<>();
-        for (int i = gridStartRow; i < rows.size(); i++) {
-            grid.addAll(rows.get(i));
+        if (bestStart < 0) {
+            // 没有明显网格则全保留，避免误杀
+            for (List<Detected> r : rows) {
+                grid.addAll(r);
+            }
+        } else {
+            for (int i = bestStart; i < bestStart + bestLen; i++) {
+                grid.addAll(rows.get(i));
+            }
         }
 
         // 4) 阅读顺序排序
@@ -557,9 +570,20 @@ public class ComparisonActivity extends AppCompatActivity {
         if (s == null) {
             return "";
         }
-        return s.replaceAll("[\\s\\u3000]+", "")
-                .replace("（", "(").replace("）", ")")
-                .trim();
+        // 全角括号转半角，再只保留 中文/字母/数字/括号，
+        // 借此清除空格、三角(◢▲▼)、箭头、斜杠等 UI 标记符号(修复“阅读模式◢”等)。
+        String t = s.replace("（", "(").replace("）", ")");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if ((c >= '\u4e00' && c <= '\u9fa5')
+                    || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9')
+                    || c == '(' || c == ')') {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     /** 返回匹配的参考项下标，未匹配返回 -1。 */
@@ -677,77 +701,63 @@ public class ComparisonActivity extends AppCompatActivity {
                 .append("，对比起点：<b>").append(reference.get(refStart).name)
                 .append("</b>（文档 No.").append(reference.get(refStart).order).append("）<br>");
 
-        // ---- 顺序错位 ----
-        sb.append("<br><b>【顺序检查】</b><br>");
-        if (orderMismatch.isEmpty() && screenOnly.isEmpty() && refOnly.isEmpty()) {
-            sb.append("<font color='#2e7d32'>✔ 名称与顺序完全一致</font><br>");
-        } else if (orderMismatch.isEmpty()) {
-            sb.append("<font color='#2e7d32'>✔ 已对应上的项顺序一致</font>（但存在缺失/多出，见下）<br>");
+        // ---- 5.1 表格有、测试机没有（缺失）----
+        sb.append("<br><b>【1. 表格有、测试机没有】</b><br>");
+        if (refOnly.isEmpty()) {
+            sb.append("<font color='#2e7d32'>✔ 无</font><br>");
+        } else {
+            problems += refOnly.size();
+            for (String nm : refOnly) {
+                sb.append("<font color='#c62828'>&nbsp;&nbsp;✗ ").append(nm).append("</font><br>");
+            }
+        }
+
+        // ---- 5.2 测试机有、表格没有（多出）----
+        sb.append("<br><b>【2. 测试机有、表格没有】</b><br>");
+        if (screenOnly.isEmpty()) {
+            sb.append("<font color='#2e7d32'>✔ 无</font><br>");
+        } else {
+            problems += screenOnly.size();
+            for (String nm : screenOnly) {
+                sb.append("<font color='#ef6c00'>&nbsp;&nbsp;⚠ ").append(nm).append("</font><br>");
+            }
+        }
+
+        // ---- 5.3 顺序不匹配 ----
+        sb.append("<br><b>【3. 顺序不匹配】</b><br>");
+        if (orderMismatch.isEmpty()) {
+            sb.append("<font color='#2e7d32'>✔ 无</font><br>");
         } else {
             problems += orderMismatch.size();
-            sb.append("<font color='#c62828'>✗ 以下控件顺序错位（位置与文档不符）：</font><br>");
             for (String nm : orderMismatch) {
-                sb.append("&nbsp;&nbsp;• <b>").append(nm).append("</b><br>");
+                sb.append("<font color='#c62828'>&nbsp;&nbsp;✗ ").append(nm)
+                        .append("（位置与表格不符）</font><br>");
             }
         }
 
-        // ---- 文档有、截图无（缺失）----
-        if (!refOnly.isEmpty()) {
-            problems += refOnly.size();
-            sb.append("<br><font color='#c62828'>✗ 文档中有、截图未识别到（缺失 ")
-                    .append(refOnly.size()).append(" 项）：</font><br>");
-            for (String nm : refOnly) {
-                sb.append("&nbsp;&nbsp;• ").append(nm).append("<br>");
-            }
-        }
-
-        // ---- 截图有、文档无（多出）----
-        if (!screenOnly.isEmpty()) {
-            problems += screenOnly.size();
-            sb.append("<br><font color='#ef6c00'>⚠ 截图中有、文档没有（多出 ")
-                    .append(screenOnly.size()).append(" 项）：</font><br>");
-            for (String nm : screenOnly) {
-                sb.append("&nbsp;&nbsp;• ").append(nm).append("<br>");
-            }
-        }
-
-        // ---- 截图顺序 → 文档序号 对照 ----
-        sb.append("<br><b>【截图顺序 → 文档序号】</b><br>");
-        for (int k = 0; k < detections.size(); k++) {
-            Detected d = detections.get(k);
-            if (d.matchedRefIndex >= 0) {
-                RefItem r = reference.get(d.matchedRefIndex);
-                sb.append(k + 1).append(". ").append(r.name)
-                        .append(" <font color='#888'>(文档 No.").append(r.order).append(")</font><br>");
-            } else {
-                sb.append(k + 1).append(". <font color='#ef6c00'>").append(d.text)
-                        .append("（不在文档）</font><br>");
-            }
-        }
-
-        // ---- 开关状态检查（仅对已对应上的项）----
-        sb.append("<br><b>【开关状态检查】</b>（彩色高亮=开，灰色=关）<br>");
+        // ---- 5.4 开关状态不符（仅对已对应上的项）----
+        sb.append("<br><b>【4. 开关状态不符】</b>（彩色高亮=开，灰色=关）<br>");
+        int swProblems = 0;
         for (int[] op : ops) {
             if (op[0] != 0) {
                 continue;
             }
             Detected d = detections.get(op[1]);
             RefItem r = reference.get(refRealIdx.get(op[2]));
-            String detectedTxt = d.on ? "开" : "关";
-            String expectTxt = r.expectedOn ? "开" : "关";
-            String pct = String.format(java.util.Locale.US, "%.0f%%", d.highlightRatio * 100);
-            if (d.on == r.expectedOn) {
-                sb.append("<font color='#2e7d32'>✔ ").append(r.name)
-                        .append("：实际=").append(detectedTxt)
-                        .append("，文档=").append(expectTxt)
-                        .append(" <font color='#888'>(").append(pct).append(")</font></font><br>");
-            } else {
+            if (d.on != r.expectedOn) {
+                swProblems++;
                 problems++;
-                sb.append("<font color='#c62828'>✗ ").append(r.name)
-                        .append("：实际=").append(detectedTxt)
-                        .append("，文档=").append(expectTxt)
+                String detectedTxt = d.on ? "开" : "关";
+                String expectTxt = r.expectedOn ? "开" : "关";
+                String pct = String.format(java.util.Locale.US, "%.0f%%", d.highlightRatio * 100);
+                sb.append("<font color='#c62828'>&nbsp;&nbsp;✗ ").append(r.name)
+                        .append("：测试机=").append(detectedTxt)
+                        .append("，表格=").append(expectTxt)
                         .append(" <font color='#888'>(").append(pct).append(")</font></font><br>");
             }
+        }
+        if (swProblems == 0) {
+            sb.append("<font color='#2e7d32'>✔ 无</font><br>");
         }
 
         // ---- 总结 ----
@@ -756,7 +766,7 @@ public class ComparisonActivity extends AppCompatActivity {
             summary = "<font color='#2e7d32'><b>✔ 全部一致，无异常</b></font><br><br>";
         } else {
             summary = "<font color='#c62828'><b>✗ 共发现 " + problems
-                    + " 处异常，请见下方红色/橙色标记</b></font><br><br>";
+                    + " 处异常</b></font><br><br>";
         }
         return summary + sb;
     }
