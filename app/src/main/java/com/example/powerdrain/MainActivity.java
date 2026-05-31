@@ -65,6 +65,7 @@ public class MainActivity extends AppCompatActivity {
     private CheckBox cbVibrate;
     private Button btnStart;
     private Button btnStop;
+    private Button btnOpenCompare;
 
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
 
@@ -101,6 +102,7 @@ public class MainActivity extends AppCompatActivity {
         cbVibrate = findViewById(R.id.cbVibrate);
         btnStart = findViewById(R.id.btnStart);
         btnStop = findViewById(R.id.btnStop);
+        btnOpenCompare = findViewById(R.id.btnOpenCompare);
 
         sbThreshold.setProgress(stopThreshold);
         tvThreshold.setText(getString(R.string.threshold_label, stopThreshold));
@@ -129,6 +131,8 @@ public class MainActivity extends AppCompatActivity {
 
         btnStart.setOnClickListener(v -> startDrain());
         btnStop.setOnClickListener(v -> stopDrain(true));
+        btnOpenCompare.setOnClickListener(v ->
+                startActivity(new android.content.Intent(this, ComparisonActivity.class)));
     }
 
     private void detectFlash() {

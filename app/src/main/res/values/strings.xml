@@ -30,4 +30,15 @@
     <string name="auto_stopped">电量已降到 %1$d%%，已自动停止耗电</string>
 
     <string name="hint">提示：本应用通过 CPU 满载、屏幕高亮、闪光灯、震动等方式快速消耗电量，用于平板续航/耗电测试。测试时请保持应用在前台、不要充电。设备温度过高时请停止测试。</string>
+
+    <string name="btn_open_compare">通控中心截图对比</string>
+
+    <string name="cmp_title">通控中心截图对比</string>
+    <string name="cmp_hint">上传一张通控中心截图，自动识别各控件名称与开关状态（蓝色高亮=开），并与内置参考清单对比顺序与开关是否正确。若识别不准，可拖动下方灵敏度滑块调整蓝色判定。</string>
+    <string name="cmp_pick">上传截图</string>
+    <string name="cmp_sensitivity">蓝色高亮灵敏度（蓝色像素占比阈值）：%1$d%%</string>
+    <string name="cmp_result_empty">请先上传一张通控中心截图。</string>
+    <string name="cmp_recognizing">正在识别…</string>
+    <string name="cmp_none_recognized">未识别到任何匹配的控件名称。请确认截图是通控中心面板，且文字清晰完整。</string>
+    <string name="cmp_ocr_failed">文字识别失败：%1$s</string>
 </resources>

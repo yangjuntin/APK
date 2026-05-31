@@ -30,4 +30,7 @@ android {
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.activity:activity:1.8.0'
+    // ML Kit 中文文字识别（内置模型，无需联网下载）
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
 }
